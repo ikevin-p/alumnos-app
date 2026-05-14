@@ -7,6 +7,7 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/alumnos")
+@CrossOrigin(origins = "*") // <--- ESTA ES LA LÍNEA CLAVE QUE DEBES AGREGAR
 public class AlumnoController {
     @Autowired
     private AlumnoRepository repository;
