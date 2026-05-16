@@ -1,10 +1,4 @@
-# =============================================================================
-# INNOVATECH CHILE — alumnos-datos/.github/workflows/ci.yml
-# Pipeline: Build imagen PostgreSQL personalizada → Push ECR → Deploy EC2
-# Trigger: push a la rama deploy
-# =============================================================================
-
-name: "Database CI/CD"
+name: "Backend CI/CD"
 
 on:
   push:
@@ -16,10 +10,9 @@ env:
   IMAGE_TAG:  ${{ github.sha }}
 
 jobs:
-  build-and-deploy:
-    name: "Build PostgreSQL → ECR → EC2"
+  build-and-push:
+    name: "Build Spring Boot → ECR"
     runs-on: ubuntu-latest
-
     steps:
       - name: "Checkout código"
         uses: actions/checkout@v4
@@ -33,38 +26,49 @@ jobs:
           aws-region:            ${{ secrets.AWS_REGION }}
 
       - name: "Login en Amazon ECR"
-        id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: "Build y Push imagen PostgreSQL a ECR"
+      - name: "Build y Push imagen Backend"
         env:
-          ECR_DATOS_URI: ${{ secrets.ECR_DATOS_URI }}
+          ECR_APP_URI: ${{ secrets.ECR_APP_URI }}
         run: |
           docker build \
-            --tag $ECR_DATOS_URI:$IMAGE_TAG \
-            --tag $ECR_DATOS_URI:latest \
+            --tag $ECR_APP_URI:$IMAGE_TAG \
+            --tag $ECR_APP_URI:latest \
             .
-          docker push $ECR_DATOS_URI:$IMAGE_TAG
-          docker push $ECR_DATOS_URI:latest
-          echo "✅ Imagen DB publicada: $ECR_DATOS_URI:latest"
+          docker push $ECR_APP_URI:$IMAGE_TAG
+          docker push $ECR_APP_URI:latest
 
-      - name: "Deploy PostgreSQL en EC2-Datos via SSM"
+  deploy:
+    name: "Deploy Backend en EC2"
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    steps:
+      - name: "Configurar credenciales AWS"
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token:     ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region:            ${{ secrets.AWS_REGION }}
+
+      - name: "Deploy Backend en EC2 via SSM"
         env:
-          ECR_DATOS_URI:  ${{ secrets.ECR_DATOS_URI }}
-          EC2_DATOS_ID:   ${{ secrets.EC2_DATOS_ID }}
+          ECR_APP_URI: ${{ secrets.ECR_APP_URI }}
+          EC2_APP_ID:  ${{ secrets.EC2_APP_ID }}
         run: |
           aws ssm send-command \
-            --instance-ids "$EC2_DATOS_ID" \
+            --instance-ids "$EC2_APP_ID" \
             --document-name "AWS-RunShellScript" \
-            --comment "Deploy DB - $IMAGE_TAG" \
+            --comment "Deploy Backend - $IMAGE_TAG" \
             --parameters commands="[
-              'aws ecr get-login-password --region $AWS_REGION | sudo docker login --username AWS --password-stdin $ECR_DATOS_URI',
-              'sudo docker pull $ECR_DATOS_URI:latest',
-              'sudo docker stop alumnos-datos 2>/dev/null || true',
-              'sudo docker rm   alumnos-datos 2>/dev/null || true',
+              'aws ecr get-login-password --region $AWS_REGION | sudo docker login --username AWS --password-stdin $ECR_APP_URI',
+              'sudo docker pull $ECR_APP_URI:latest',
+              'sudo docker stop alumnos-app 2>/dev/null || true',
+              'sudo docker rm   alumnos-app 2>/dev/null || true',
               'sudo docker network create alumnos-network 2>/dev/null || true',
-              'sudo docker run -d --name alumnos-datos --restart unless-stopped --network alumnos-network -e POSTGRES_DB=alumnos -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=postgres -v pgdata:/var/lib/postgresql/data -p 5432:5432 $ECR_DATOS_URI:latest',
-              'sleep 5 && sudo docker ps | grep alumnos-datos'
+              'sudo docker run -d --name alumnos-app --restart unless-stopped --network alumnos-network -p 8080:8080 -e SPRING_DATASOURCE_URL=jdbc:postgresql://alumnos-datos:5432/alumnos -e SPRING_DATASOURCE_USERNAME=postgres -e SPRING_DATASOURCE_PASSWORD=postgres $ECR_APP_URI:latest',
+              'sudo docker image prune -f'
             ]" \
             --region "$AWS_REGION" \
             --output text
