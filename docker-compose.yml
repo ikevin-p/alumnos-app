@@ -1,0 +1,29 @@
+# =============================================================================
+# INNOVATECH CHILE — alumnos-datos/docker-compose.yml
+# Levanta PostgreSQL con red externa compartida (igual patrón que juegos-datos).
+# La red "alumnos-network" es creada aquí y reutilizada por alumnos-app.
+# =============================================================================
+
+services:
+  alumnos-datos:
+    image: postgres:16
+    container_name: alumnos-datos
+    environment:
+      POSTGRES_DB:       alumnos
+      POSTGRES_USER:     postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      # Script de inicialización (solo lectura, se ejecuta la primera vez)
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      # Persistencia de datos en directorio local del host
+      - ./pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+    networks:
+      - alumnos-network
+
+networks:
+  alumnos-network:
+    name: alumnos-network
+    driver: bridge
